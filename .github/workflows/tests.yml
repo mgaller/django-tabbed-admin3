@@ -2,15 +2,22 @@ name: Tests and package
 
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_dispatch:
   workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -24,20 +31,42 @@ jobs:
           - {python: '3.12', django: '6.1'}
           - {python: '3.14', django: '6.1'}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install . 'Django~=${{ matrix.django }}.0'
       - run: PYTHONPATH=. python tabbed_admin/tests/runtests.py
 
   package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Check release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          with open('pyproject.toml', 'rb') as package:
+              version = tomllib.load(package)['project']['version']
+          if os.environ['RELEASE_TAG'] not in (version, f'v{version}'):
+              raise SystemExit('Release tag must match the package version')
+          PY
       - run: python -m pip install build twine ruff
       - run: python -m ruff check tabbed_admin
       - run: python -m ruff format --check tabbed_admin
@@ -48,4 +77,12 @@ jobs:
         run: |
           mkdir .wheel-test
           cd .wheel-test
-          python ../tabbed_admin/tests/runtests.py
+          python "$GITHUB_WORKSPACE/tabbed_admin/tests/runtests.py"
+      - name: Store tested distributions
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
