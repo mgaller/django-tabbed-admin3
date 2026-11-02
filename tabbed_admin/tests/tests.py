@@ -1,240 +1,193 @@
-from django.conf import settings
-from django.contrib.admin.sites import AdminSite
-from django.template import Context
-from django.test import TestCase
-from django.test.client import RequestFactory, Client
-from django.test.utils import override_settings
+from unittest.mock import patch
 
-from tabbed_admin.settings import USE_JQUERY_UI
+import django
+from django.contrib import admin
+from django.contrib.auth.models import Permission, User
+from django.template import Context
+from django.test import RequestFactory, TestCase
+from django.urls import reverse
+
+from tabbed_admin import TabbedModelAdmin
+from tabbed_admin.settings import JQUERY_UI_CSS, JQUERY_UI_JS
 from tabbed_admin.templatetags.tabbed_admin_tags import render_tab_fieldsets_inlines
 from tabbed_admin.tests.admin import BandAdmin, InterviewInline
 from tabbed_admin.tests.models import Band
 
 
-class MockRequest(object):
-    pass
-
-
-class MockSuperUser(object):
-    is_active = True
-    is_staff = True
-    def has_perm(self, perm):
-        return True
-
-request = RequestFactory()
-request.user = MockSuperUser()
-request.csrf_processing_done = True
-
-
 class TabbedModelAdminTest(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.user = User.objects.create_superuser(username="admin", email="admin@example.test", password="test-only")
+        cls.band = Band.objects.create(name="Test band", style=Band.STYLE_JAZZ)
 
-    def setUp(self):
-        self.site = AdminSite()
+    def setUp(self) -> None:
+        self.request = RequestFactory().get("/admin/")
+        self.request.user = self.user
+        self.model_admin = BandAdmin(Band, admin.site)
 
-    def test_fieldsets_inline_attribute_populated(self):
-        """
-        Tests if self.inlines and self.fieldsets are correcly populated from
-        the self.tabs attribute.
-        """
-        admin = BandAdmin(Band, self.site)
-        self.assertIsNone(admin.fieldsets)
-        self.assertEqual(0, len(admin.inlines))
-        fieldsets = admin.get_fieldsets(request)
-        inlines = admin.get_inline_instances(request)
-        self.assertNotEqual(0, len(fieldsets))
-        self.assertNotEqual(0, len(inlines))
-        self.assertNotEqual(0, len(admin.fieldsets))
-        self.assertNotEqual(0, len(admin.inlines))
+    def test_fieldsets_inline_attribute_populated(self) -> None:
+        fieldsets = self.model_admin.get_fieldsets(self.request)
+        inlines = self.model_admin.get_inline_instances(self.request)
+        self.assertEqual(len(fieldsets), 2)
+        self.assertEqual(len(inlines), 3)
+        self.assertEqual(self.model_admin.fieldsets, fieldsets)
+        self.assertEqual(len(self.model_admin.inlines), 3)
 
-    def test_fieldsets_inlines_overriden_by_tabs(self):
-        """
-        Tests if when set by default, fieldsets and inlines are properly
-        overriden.
-        """
-        class TestBandAdmin(BandAdmin):
-            fieldsets = (
-                ('Social', {
-                    'fields': ('website', 'twitter', 'facebook')
-                })
-            )
-            inlines = (
-                InterviewInline,
-            )
-        admin = TestBandAdmin(Band, self.site)
-        self.assertEqual(admin.get_fieldsets(request),
-                         admin.formatted_tabs['fieldsets'])
-        inlines = admin.get_inline_instances(request)
-        inlines = admin.inlines
-        for inline in inlines:
-            self.assertIn(inline, admin.formatted_tabs['inlines'])
+    def test_fieldsets_inlines_overridden_by_tabs(self) -> None:
+        class ConfiguredAdmin(BandAdmin):
+            fieldsets = (("Unused", {"fields": ("website",)}),)
+            inlines = (InterviewInline,)
 
-    def test_get_tabs_overrides_tabs_attribute(self):
-        """
-        Tests if get_tabs method successfully overrides the self.tabs and returns it.
-        """
-        single_tab = [('Overview', BandAdmin.tab_overview)]
-        class TestBandAdmin(BandAdmin):
+        model_admin = ConfiguredAdmin(Band, admin.site)
+        self.assertEqual(model_admin.get_fieldsets(self.request), model_admin.formatted_tabs["fieldsets"])
+        model_admin.get_inline_instances(self.request)
+        self.assertNotIn(InterviewInline, model_admin.inlines)
+
+    def test_dynamic_tabs_receive_current_object(self) -> None:
+        class DynamicAdmin(BandAdmin):
             def get_tabs(self, request, obj=None):
-                """
-                Returns the tabs attribute.
-                """
-                tabs = self.tabs
-                if obj is not None and obj.style == Band.STYLE_OVERRIDE:
-                    tabs = single_tab
-                self.tabs = tabs
-                return super(TestBandAdmin, self).get_tabs(request, obj)
+                name = obj.name if obj else "New band"
+                return [(name, [(None, {"fields": ("name",)})])]
 
-        admin = TestBandAdmin(Band, self.site)
-        band = Band.objects.create(name="Test band", style=Band.STYLE_JAZZ)
-        tabs = admin.get_tabs(request, band)
-        self.assertEqual(len(tabs), 2)
-        self.assertNotEqual(tabs, single_tab)
-        band.style = Band.STYLE_OVERRIDE
-        tabs = admin.get_tabs(request, band)
-        self.assertEqual(len(tabs), 1)
-        self.assertEqual(tabs, single_tab)
+        model_admin = DynamicAdmin(Band, admin.site)
+        response = model_admin.change_view(self.request, str(self.band.pk))
+        response.render()
+        self.assertEqual(response.context_data["tabs"]["fields"][0]["name"], "Test band")
+        self.assertEqual(model_admin.get_formatted_tabs(self.request)["fields"][0]["name"], "New band")
 
-    def test_dynamically_add_fieldsets_inlines_to_tabs(self):
-        """
-        Tests overriding dynamically tabs via get_tabs.
-        """
-        added_fieldset = ('Social', {
-            'fields': ('website', 'twitter', 'facebook')
-        })
-        added_inline = InterviewInline
+    def test_tab_configuration_is_isolated(self) -> None:
+        first = self.model_admin.get_formatted_tabs(self.request)
+        second = BandAdmin(Band, admin.site).get_formatted_tabs(self.request)
+        first["fields"].clear()
+        self.assertEqual(len(second["fields"]), 2)
+        self.assertEqual(self.model_admin.get_fieldsets(self.request)[0][1]["fields"], ("name", "bio", "style"))
 
-        class TestBandAdmin(BandAdmin):
-            def get_tabs(self, request, obj=None):
-                tabs = self.tabs
-                tab_overview = self.tab_overview + (added_fieldset, )
-                tab_ressources = self.tab_ressources + (added_inline, )
-                tabs = [
-                    ('Overview', tab_overview),
-                    ('Ressources', tab_ressources)
-                ]
-                self.tabs = tabs
-                return super(TestBandAdmin, self).get_tabs(request, obj)
+    def test_no_tabs_uses_standard_layout(self) -> None:
+        model_admin = TabbedModelAdmin(Band, admin.site)
+        response = model_admin.add_view(self.request)
+        response.render()
+        self.assertContains(response, 'name="name"')
+        self.assertNotContains(response, 'id="tabs"')
+        self.assertEqual(model_admin.get_inlines(self.request, None), ())
 
-        original_admin = BandAdmin(Band, self.site)
-        self.assertNotIn(added_fieldset, original_admin.get_fieldsets(request))
-        self.assertNotIn(added_inline, original_admin.tab_ressources)
-        admin = TestBandAdmin(Band, self.site)
-        inlines_classes = []
-        inlines = admin.get_inline_instances(request)
-        for inline in inlines:
-            inlines_classes.append(inline.__class__)
-        self.assertIn(added_inline, inlines_classes)
+    def test_media_uses_jquery_ui(self) -> None:
+        media = self.model_admin.media
+        self.assertIn(JQUERY_UI_JS, media._js)
+        self.assertIn(JQUERY_UI_CSS, media._css["all"])
+        self.assertIn("tabbed_admin/css/tabbed_admin.css", media._css["all"])
+        self.assertNotIn("tabbed_admin/js/tabbed_admin.js", media._js)
 
-    def test_version_previous_to_django(self):
-        """
-        Tests overriding dynamically tabs via get_tabs.
-        """
-        added_fieldset = ('Social', {
-            'fields': ('website', 'twitter', 'facebook')
-        })
-        added_inline = InterviewInline
+    def test_custom_parent_template_preserves_controls(self) -> None:
+        # A custom parent template must retain its submit controls and tools.
+        templates = {
+            "custom_change_form.html": '{% extends "admin/change_form.html" %}{% block submit_buttons_bottom %}<button>Custom save</button>{% endblock %}'
+        }
+        from django.conf import settings
 
-        class TestBandAdmin(BandAdmin):
-            def get_tabs(self, request, obj=None):
-                tabs = self.tabs
-                tab_overview = self.tab_overview + (added_fieldset, )
-                tab_ressources = self.tab_ressources + (added_inline, )
-                tabs = [
-                    ('Overview', tab_overview),
-                    ('Ressources', tab_ressources)
-                ]
-                self.tabs = tabs
-                return super(TestBandAdmin, self).get_tabs(request, obj)
+        template_settings = [
+            {
+                **settings.TEMPLATES[0],
+                "APP_DIRS": False,
+                "OPTIONS": {
+                    **settings.TEMPLATES[0]["OPTIONS"],
+                    "loaders": [
+                        ("django.template.loaders.locmem.Loader", templates),
+                        "django.template.loaders.app_directories.Loader",
+                    ],
+                },
+            }
+        ]
+        with self.settings(TEMPLATES=template_settings):
+            for use_context in (False, True):
+                with self.subTest(use_context=use_context):
+                    self.model_admin.tabbed_admin_base_template = (
+                        "admin/change_form.html" if use_context else "custom_change_form.html"
+                    )
+                    extra_context = {"tabbed_admin_base_template": "custom_change_form.html"} if use_context else {}
+                    response = self.model_admin.change_view(
+                        self.request, str(self.band.pk), extra_context=extra_context
+                    )
+                    response.render()
+                    self.assertContains(response, "Custom save")
+                    self.assertContains(response, 'class="object-tools"', count=1)
+                    self.assertContains(response, 'id="tabs"', count=1)
 
-        original_admin = BandAdmin(Band, self.site)
-        self.assertNotIn(added_fieldset, original_admin.get_fieldsets(request))
-        self.assertNotIn(added_inline, original_admin.tab_ressources)
-        admin = TestBandAdmin(Band, self.site)
-        inlines_classes = []
-        inlines = admin.get_inline_instances(request)
-        for inline in inlines:
-            inlines_classes.append(inline.__class__)
-        self.assertIn(added_inline, inlines_classes)
-        self.assertIn(added_fieldset, admin.get_fieldsets(request))
-        self.assertIn(added_fieldset, admin.get_fieldsets(request))
-
-    def test_medias_method_with_default_settings(self):
-        """
-        Tests that the media method is retrning the proper static files when settings.TABBED_ADMIN_USE_JQUERY_UI
-        is True or False.
-        """
-        self.assertEqual(False, USE_JQUERY_UI)
-        admin = BandAdmin(Band, self.site)
-        medias = admin.media
-        self.assertEqual({}, medias._css)
-        for js in medias._js:
-            self.assertNotIn(js, 'tabbed_admin')
-
-    def test_medias_method_with_grappelli(self):
-        """
-        Tests if the right css ile is triggered when grappelli is installed.
-        """
-        try:
-            import grappelli
-        except ImportError:
-            return
-        settings.INSTALLED_APPS += ('grappelli', )
-        self.assertIn('grappelli', settings.INSTALLED_APPS)
-        admin = BandAdmin(Band, self.site)
-        medias = admin.media
-        self.assertTrue(len(medias._css) > 0)
-        self.assertIn('all', medias._css)
-        self.assertTrue(len(medias._css['all']) == 1)
-        self.assertIn('grappelli', medias._css['all'][0])
-        
 
 class TabbedAdminTagsTest(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.user = User.objects.create_superuser(username="admin", email="admin@example.test", password="test-only")
+        cls.band = Band.objects.create(name="Test band", style=Band.STYLE_JAZZ)
 
-    def setUp(self):
-        self.site = AdminSite()
-        self.admin = BandAdmin(Band, self.site)
-        self.req = request.get('/admin/tabbed_admin/tab/')
-        self.req.user = request.user
-        self.view = self.admin.add_view(self.req)
-        self.context = Context(self.view)
-        self.context.push()
-        self.context['adminform'] = self.view.context_data['adminform']
-        self.context['request'] = self.req
-        self.context['inline_admin_formsets'] = self.view.context_data['inline_admin_formsets']
+    def setUp(self) -> None:
+        self.client.force_login(self.user)
+        self.change_url = reverse("admin:tests_band_change", args=[self.band.pk])
 
-    def test_request_not_in_context_raising_improperly_configured(self):
-        """
-        Tests if an exception is thrown when no request is passed.
-        """
-        from django.core.exceptions import ImproperlyConfigured
-        context = self.context
-        del context['request']
-        self.assertRaises(ImproperlyConfigured, render_tab_fieldsets_inlines, self.context, [])
+    def test_view_only_permissions(self) -> None:
+        # View-only forms must reuse Django's readonly fields instead of rebuilding them.
+        viewer = User.objects.create_user(username="viewer", is_staff=True)
+        viewer.user_permissions.add(Permission.objects.get(codename="view_band", content_type__app_label="tests"))
+        self.client.force_login(viewer)
+        response = self.client.get(self.change_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Test band")
+        self.assertNotContains(response, 'name="name"')
+        self.assertNotContains(response, 'name="_save"')
+        self.assertNotContains(response, 'id="musician_set-group"')
 
-    def test_fieldset_passed_returns_fieldset_templated(self):
-        """
-        Tests if the fieldset html is correctly generated when a fieldset is passed
-        """
-        fieldset = self.view.context_data['tabs']['fields'][0]['entries'][0]
-        self.assertEqual('fieldset', fieldset['type'])
-        #tag = render_tab_fieldsets_inlines(self.context, fieldset)
-        #self.assertIn('fieldset', tag)
+    def test_standard_controls_and_popup_fields(self) -> None:
+        response = self.client.get(self.change_url)
+        self.assertContains(response, 'name="name"', count=1)
+        self.assertContains(response, 'class="object-tools"', count=1)
+        if django.VERSION >= (5, 1):
+            self.assertContains(response, 'id="fieldset-0-1-heading"', count=1)
+        self.assertContains(response, 'name="_save"')
+        self.assertContains(response, "csrfmiddlewaretoken")
+        popup = self.client.get(self.change_url, {"_popup": "1", "_to_field": "id", "_source_model": "tests.band"})
+        self.assertContains(popup, 'name="_popup"')
+        self.assertContains(popup, 'name="_to_field"')
+        self.assertNotContains(popup, 'class="object-tools"')
+        if hasattr(admin, "ActionLocation"):
+            self.assertContains(popup, 'name="_source_model"')
 
-    def test_inline_passed_returns_inline_templated(self):
-        """
-        Tests if an inline html is correctly generated when an inline is passed.
-        """
-        inline = self.view.context_data['tabs']['fields'][0]['entries'][1]
-        self.assertEqual('inline', inline['type'])
-        #tag = render_tab_fieldsets_inlines(self.context, inline)
-        #self.assertIn('inline', tag)
+            @admin.action(description="Example form action", location=admin.ActionLocation.CHANGE_FORM)
+            def example_action(model_admin, request, queryset):
+                queryset.update(name="Action executed")
 
-    def test_wrong_inline_key_returns_nothing(self):
-        """
-        Tests if a worng inline naming returns nothing.
-        """
-        inline = self.view.context_data['tabs']['fields'][0]['entries'][1]
-        self.assertEqual('inline', inline['type'])
-        inline['name'] = 'Not exists'
-        tag = render_tab_fieldsets_inlines(self.context, inline)
-        self.assertEqual('', tag)
+            with patch.object(BandAdmin, "actions", [example_action]):
+                response = self.client.get(self.change_url)
+                self.assertContains(response, "Example form action")
+                self.assertContains(response, 'name="CHANGE_FORM-action"')
+                self.assertContains(response, 'name="_selected_action"')
+                response = self.client.post(
+                    self.change_url,
+                    {"CHANGE_FORM-action": "example_action", "_selected_action": str(self.band.pk)},
+                )
+            self.assertEqual(response.status_code, 302)
+            self.band.refresh_from_db()
+            self.assertEqual(self.band.name, "Action executed")
+
+    def test_inline_rendering_and_form_submission(self) -> None:
+        response = self.client.get(self.change_url)
+        for name in ("musician", "concert", "album"):
+            self.assertContains(response, f'id="{name}_set-group"', count=1)
+            self.assertContains(response, f'name="{name}_set-TOTAL_FORMS"', count=1)
+        data = {"name": "Changed band", "style": str(Band.STYLE_JAZZ), "_continue": "1"}
+        for name in ("musician", "concert", "album"):
+            data.update({f"{name}_set-TOTAL_FORMS": "0", f"{name}_set-INITIAL_FORMS": "0"})
+        response = self.client.post(self.change_url, data)
+        self.assertEqual(response.status_code, 302, getattr(response, "context_data", {}).get("errors"))
+        self.band.refresh_from_db()
+        self.assertEqual(self.band.name, "Changed band")
+        data["name"] = ""
+        response = self.client.post(self.change_url, data)
+        self.assertContains(response, "errorlist")
+        self.assertContains(response, 'id="tabs"')
+
+    def test_unavailable_inline_renders_nothing(self) -> None:
+        response = self.client.get(self.change_url)
+        context = Context(response.context_data)
+        context["request"] = response.wsgi_request
+        entry = {"type": "inline", "name": "InterviewInline"}
+        self.assertEqual(render_tab_fieldsets_inlines(context, entry), "")
+        self.assertNotIn("inline_admin_formset", context)

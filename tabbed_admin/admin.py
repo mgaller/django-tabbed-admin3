@@ -2,7 +2,7 @@ from django.conf import settings
 from django.contrib.admin.options import ModelAdmin
 from django.utils.translation import gettext_lazy as _
 
-from .settings import USE_JQUERY_UI, JQUERY_UI_CSS, JQUERY_UI_JS
+from .settings import JQUERY_UI_CSS, JQUERY_UI_JS, USE_JQUERY_UI
 
 
 class TabbedModelAdmin(ModelAdmin):
@@ -11,6 +11,7 @@ class TabbedModelAdmin(ModelAdmin):
 
     # Needs a specific template to display the tabs
     change_form_template = "tabbed_admin/change_form.html"
+    tabbed_admin_base_template = "admin/change_form.html"
 
     def get_fieldsets(self, request, obj=None):
         """
@@ -62,6 +63,8 @@ class TabbedModelAdmin(ModelAdmin):
         """
         if self.tabs:
             self.parse_fieldsets_inlines_from_tabs(request, obj)
+        else:
+            self.formatted_tabs = {"fields": [], "fieldsets": (), "inlines": ()}
         return self.formatted_tabs
 
     def parse_fieldsets_inlines_from_tabs(self, request, obj=None):
@@ -71,25 +74,16 @@ class TabbedModelAdmin(ModelAdmin):
         """
         tabs_fieldsets = ()
         tabs_inlines = ()
-        self.formatted_tabs["fields"] = []
+        self.formatted_tabs = {"fields": []}
         for tab in self.get_tabs(request, obj):
             # Checks that each tab is formatted with 2 arguments: verbose name
             # of the tab and the tab configuration.
             if not isinstance(tab, (tuple, list)):
-                raise TypeError(
-                    _("Each tab entry must be either a list or a tuple")
-                )
+                raise TypeError(_("Each tab entry must be either a list or a tuple"))
             if len(tab) != 2:
-                raise ValueError(
-                    _(
-                        "Each tabs entry must contain 2 arguments: "
-                        "a verbose name and the tab setup."
-                    )
-                )
+                raise ValueError(_("Each tabs entry must contain 2 arguments: a verbose name and the tab setup."))
             if not isinstance(tab[1], (tuple, list)):
-                raise TypeError(
-                    _("A tab definition must be either a list or a tuple")
-                )
+                raise TypeError(_("A tab definition must be either a list or a tuple"))
             # Parse the tab configuration: if an entry is a tuple or a list
             # it's a fieldset, otherwise it's an inline class.
             formatted_tab = {"name": tab[0], "entries": []}
@@ -100,6 +94,7 @@ class TabbedModelAdmin(ModelAdmin):
                         "type": "fieldset",
                         "name": tab_entry[0],
                         "config": tab_entry[1],
+                        "index": len(tabs_fieldsets) - 1,
                     }
                 else:
                     tabs_inlines = tabs_inlines + (tab_entry,)
@@ -112,29 +107,19 @@ class TabbedModelAdmin(ModelAdmin):
         self.formatted_tabs["fieldsets"] = tabs_fieldsets
         self.formatted_tabs["inlines"] = tabs_inlines
 
-    def add_view(self, request, form_url="", extra_context=None):
-        """
-        Overwrites add_view to insert the tabs config for the template.
-        """
-        if extra_context is None:
-            extra_context = {}
-        extra_context.update({"tabs": self.get_formatted_tabs(request)})
-        return super().add_view(
-            request, form_url=form_url, extra_context=extra_context
-        )
-
-    def change_view(self, request, object_id, form_url="", extra_context=None):
-        """
-        Overwrites change_view to insert the tabs config for the template.
-        """
-        if extra_context is None:
-            extra_context = {}
-        extra_context.update({"tabs": self.get_formatted_tabs(request)})
-        return super().change_view(
+    def render_change_form(self, request, context, add=False, change=False, form_url="", obj=None):
+        context = {
+            **context,
+            "tabs": self.get_formatted_tabs(request, obj),
+            "tabbed_admin_base_template": context.get("tabbed_admin_base_template", self.tabbed_admin_base_template),
+        }
+        return super().render_change_form(
             request,
-            object_id,
+            context,
+            add=add,
+            change=change,
             form_url=form_url,
-            extra_context=extra_context,
+            obj=obj,
         )
 
     class Media:

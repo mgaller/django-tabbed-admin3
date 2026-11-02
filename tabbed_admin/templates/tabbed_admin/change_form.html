@@ -1,111 +1,65 @@
-{% extends "admin/change_form.html" %}
-{% load i18n admin_modify admin_urls static tabbed_admin_tags %}
+{% extends tabbed_admin_base_template|default:"admin/change_form.html" %}
+{% load tabbed_admin_tags %}
 
-{% block content %}
-
-<div id="content-main">
-  {% block object-tools %}{{ block.super }}{% endblock %}
-    <form {% if has_file_field %}enctype="multipart/form-data" {% endif %}{% if form_url %}action="{{ form_url }}" {% endif %}method="post" id="{{ opts.model_name }}_form" novalidate>{% csrf_token %}{% block form_top %}{% endblock %}
-        <div>
-            {% if is_popup %}<input type="hidden" name="{{ is_popup_var }}" value="1">{% endif %}
-            {% if to_field %}<input type="hidden" name="{{ to_field_var }}" value="{{ to_field }}">{% endif %}
-            {% if save_on_top %}{% block submit_buttons_top %}{% submit_row %}{% endblock %}{% endif %}
-            {% if errors %}
-                <p class="errornote">
-                {% if errors|length == 1 %}{% translate "Please correct the error below." %}{% else %}{% translate "Please correct the errors below." %}{% endif %}
-                </p>
-                {{ adminform.form.non_field_errors }}
-            {% endif %}
-
-            <!-- start admin_tabs stuff -->
-            <div id="tabs">
-                <ul>
-                    {% for tab in tabs.fields %}
-                      <li><a href="#tabs-{{ forloop.counter }}" id="for_tabs-{{ forloop.counter }}">{{ tab.name }}</a></li>
-                    {% endfor %}
-                </ul>
-                {% for tab in tabs.fields %}
-                    <div id="tabs-{{ forloop.counter }}" class="{{ tab.name }}">
-                        {% for entry in tab.entries %}
-                            {% render_tab_fieldsets_inlines entry %}
-                        {% endfor %}
-                    </div>
-                {% endfor %}
-            </div>
-            <script type="text/javascript">
-                (function($) {
-                    $(window).scrollTop()
-                    $('#tabs').tabs({
-                        {% if add %}
-                        // when adding, don't select a tab by default, we'll do it ourselves
-                        // by finding the first available tab.
-                        active: false
-                        {% endif %}
-                    });
-
-                    // disable tabs marked as such in page_config
-                    var enabled_tabs = [];
-                    var disabled_tabs = [];
-
-                    {% for tab in page_config %}
-                        {% if tab.enabled %}
-                            enabled_tabs.push({{ forloop.counter0 }});
-                        {% else %}
-                            disabled_tabs.push({{ forloop.counter0 }});
-                        {% endif %}
-                    {% endfor %}
-
-                    for (var i = 0; i < disabled_tabs.length; i++) {
-                        $('#tabs').tabs("disable", disabled_tabs[i]);
-                    }
-                    // enable the first non-disabled tab in add view
-                    {% if add %}
-                        $('#tabs').tabs("option", "active", enabled_tabs[0]);
-                    {% endif %}
-
-                    // Highlight tabs with errors inside
-                    $('#tabs > div').each(function() {
-                        if($(this).find('.errorlist').length) {
-                            $('#tabs #for_' +  this.id).addClass("errortab");
-                        }
-                    });
-
-                    $("#tabs").on('tabsactivate', function(event, ui) {
-                        var scrollPos = $(window).scrollTop();
-                        var hash = ui.newTab.children("li a").attr("href");
-                        window.location.hash = hash;
-                        $(window).scrollTop(scrollPos);
-                    });
-
-                    if ($('.errornote').length) {
-                        $('.errornote').addClass('tabbed-errornote');
-                    }
-
-
-                })(django.jQuery);
-            </script>
-            <!-- end admin_tabs stuff -->
-
-            {% block after_field_sets %}{% endblock %}
-
-            {% block after_related_objects %}{% endblock %}
-
-            {% block submit_buttons_bottom %}{% submit_row %}{% endblock %}
-
-            {% block admin_change_form_document_ready %}
-                <script id="django-admin-form-add-constants"
-                    src="{% static 'admin/js/change_form.js' %}"
-                    {% if adminform and add %}
-                        data-model-name="{{ opts.model_name }}"
-                    {% endif %}
-                    async>
-                </script>
-            {% endblock %}
-
-            {# JavaScript for prepopulated fields #}
-            {% prepopulated_fields_js %}
-
+{% block field_sets %}
+  {% if tabs.fields %}
+    <div id="tabs">
+      <ul>
+        {% for tab in tabs.fields %}
+          <li><a href="#tabs-{{ forloop.counter }}" id="for_tabs-{{ forloop.counter }}">{{ tab.name }}</a></li>
+        {% endfor %}
+      </ul>
+      {% for tab in tabs.fields %}
+        <div id="tabs-{{ forloop.counter }}" class="{{ tab.name }}">
+          {% for entry in tab.entries %}
+            {% render_tab_fieldsets_inlines entry %}
+          {% endfor %}
         </div>
-    </form>
-</div>
+      {% endfor %}
+    </div>
+    <script{% if csp_nonce %} nonce="{{ csp_nonce }}"{% endif %}>
+      (function($) {
+        $('#tabs').tabs({
+          {% if add %}active: false{% endif %}
+        });
+
+        const enabled_tabs = [];
+        const disabled_tabs = [];
+        {% for tab in page_config %}
+          {% if tab.enabled %}
+            enabled_tabs.push({{ forloop.counter0 }});
+          {% else %}
+            disabled_tabs.push({{ forloop.counter0 }});
+          {% endif %}
+        {% endfor %}
+        for (let i = 0; i < disabled_tabs.length; i++) {
+          $('#tabs').tabs('disable', disabled_tabs[i]);
+        }
+        {% if add %}
+          $('#tabs').tabs('option', 'active', enabled_tabs.length ? enabled_tabs[0] : {% if page_config %}false{% else %}0{% endif %});
+        {% endif %}
+
+        $('#tabs > div').each(function() {
+          if ($(this).find('.errorlist').length) {
+            $('#tabs #for_' + this.id).addClass('errortab');
+          }
+        });
+        $('#tabs').on('tabsactivate', function(event, ui) {
+          const scrollPos = $(window).scrollTop();
+          const hash = ui.newTab.find('a').attr('href');
+          if (hash) window.location.hash = hash;
+          $(window).scrollTop(scrollPos);
+        });
+        if ($('.errornote').length) {
+          $('.errornote').addClass('tabbed-errornote');
+        }
+      })(django.jQuery);
+    </script>
+  {% else %}
+    {{ block.super }}
+  {% endif %}
+{% endblock %}
+
+{% block inline_field_sets %}
+  {% if not tabs.fields %}{{ block.super }}{% endif %}
 {% endblock %}

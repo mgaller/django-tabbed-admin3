@@ -4,6 +4,16 @@ Django tabbed admin
 
 This is a simple fork of django-tabbed-admin https://github.com/omji/django-tabbed-admin with compatibility updates for modern Django versions.
 
+Version 3.2 adds Django 6.1 support while retaining jQuery UI and the existing
+``TABBED_ADMIN_*`` settings. Tests cover Django 4.2, 5.0, 5.1, 5.2, 6.0 and 6.1.
+The change-form template now inherits Django's form controls, actions and popup
+fields instead of copying them. Projects overriding
+``tabbed_admin/change_form.html`` must update their override to use this fix.
+For integration with another admin extension, ``TabbedModelAdmin.tabbed_admin_base_template``
+can specify a parent template instead of ``admin/change_form.html``.
+The ``tabbed_admin_base_template`` context variable takes precedence over this
+attribute, allowing other admin extensions to supply the parent template.
+
 
 Simple library to easilly add tabs to admin forms. It also allows users to re-order inlines and fieldsets.
 Django tabbed admin is compatible with django-grappelli and django-gipsy.
@@ -177,6 +187,8 @@ Contribution
 
 Please feel free to contribute. Any help and advices are much appreciated.
 You will find an example application to run and develop the library easily.
+
+Run the standalone test suite with ``PYTHONPATH=. python tabbed_admin/tests/runtests.py``.
 
 
 *****

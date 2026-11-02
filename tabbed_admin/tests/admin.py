@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from tabbed_admin import TabbedModelAdmin
-from tabbed_admin.tests.models import Band, Musician, Concert, Album, Interview
+from tabbed_admin.tests.models import Album, Band, Concert, Interview, Musician
 
 
 class MusicianInline(admin.StackedInline):
@@ -24,19 +24,9 @@ class BandAdmin(TabbedModelAdmin):
     model = Band
 
     tab_overview = (
-        (None, {
-            'fields': ('name', 'bio', 'style')
-        }),
+        (None, {"fields": ("name", "bio", "style")}),
         MusicianInline,
-        ('Contact', {
-            'fields': ('agent', 'phone', 'email')
-        })
+        ("Contact", {"fields": ("agent", "phone", "email")}),
     )
-    tab_ressources = (
-        ConcertInline,
-        AlbumInline
-    )
-    tabs = [
-        ('Overview', tab_overview),
-        ('Ressources', tab_ressources)
-    ]
+    tab_ressources = (ConcertInline, AlbumInline)
+    tabs = [("Overview", tab_overview), ("Ressources", tab_ressources)]

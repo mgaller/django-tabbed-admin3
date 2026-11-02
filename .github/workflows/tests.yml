@@ -1,0 +1,51 @@
+name: Tests and package
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python: '3.10', django: '4.2'}
+          - {python: '3.12', django: '4.2'}
+          - {python: '3.12', django: '5.0'}
+          - {python: '3.12', django: '5.1'}
+          - {python: '3.12', django: '5.2'}
+          - {python: '3.12', django: '6.0'}
+          - {python: '3.12', django: '6.1'}
+          - {python: '3.14', django: '6.1'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install . 'Django~=${{ matrix.django }}.0'
+      - run: PYTHONPATH=. python tabbed_admin/tests/runtests.py
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build twine ruff
+      - run: python -m ruff check tabbed_admin
+      - run: python -m ruff format --check tabbed_admin
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - run: python -m pip install dist/*.whl 'Django~=6.1.0'
+      - name: Test installed wheel outside source tree
+        run: |
+          mkdir .wheel-test
+          cd .wheel-test
+          python ../tabbed_admin/tests/runtests.py

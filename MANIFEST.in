@@ -3,3 +3,4 @@ include LICENSE.txt
 include README.rst
 recursive-include tabbed_admin/static *
 recursive-include tabbed_admin/templates *
+prune tabbed_admin_exemple

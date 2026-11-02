@@ -1,6 +1,8 @@
-from django.conf.urls import include, url
 from django.contrib import admin
+from django.urls import path
 
-urlpatterns = [
-    url(r'^admin/', include(admin.site.urls)),
-]
+from tabbed_admin.tests.admin import BandAdmin
+from tabbed_admin.tests.models import Band
+
+admin.site.register(Band, BandAdmin)
+urlpatterns = [path("admin/", admin.site.urls)]

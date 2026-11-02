@@ -20,14 +20,11 @@ def render_tab_fieldsets_inlines(context, entry):
             "TEMPLATES context_processors setting."
         )
     request = context["request"]
-    obj = context.get("original", None)
-    readonly_fields = admin_form.model_admin.get_readonly_fields(request, obj)
+    readonly_fields = admin_form.readonly_fields
+    values = context.flatten()
     inline_matching = {}
     if "inline_admin_formsets" in context:
-        inline_matching = {
-            inline.opts.__class__.__name__: inline
-            for inline in context["inline_admin_formsets"]
-        }
+        inline_matching = {inline.opts.__class__.__name__: inline for inline in context["inline_admin_formsets"]}
 
     if entry["type"] == "fieldset":
         name = entry["name"]
@@ -38,15 +35,21 @@ def render_tab_fieldsets_inlines(context, entry):
             model_admin=admin_form.model_admin,
             **entry["config"],
         )
-        context["fieldset"] = f
-        return render_to_string(fieldset_template, context.flatten(), request=request)
+        values.update(
+            fieldset=f,
+            heading_level=2,
+            prefix="fieldset",
+            id_prefix=0,
+            id_suffix=entry.get("index", 0),
+        )
+        return render_to_string(fieldset_template, values, request=request)
     elif entry["type"] == "inline":
         try:
             inline_admin_formset = inline_matching[entry["name"]]
-            context["inline_admin_formset"] = inline_admin_formset
+            values["inline_admin_formset"] = inline_admin_formset
             return render_to_string(
                 inline_admin_formset.opts.template,
-                context.flatten(),
+                values,
                 request=request,
             )
         except KeyError:
