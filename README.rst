@@ -2,7 +2,7 @@
 Django tabbed admin
 ###################
 
-This is a simple fork of django-tabbed-admin https://github.com/omji/django-tabbed-admin with Django 4.x fix.
+This is a simple fork of django-tabbed-admin https://github.com/omji/django-tabbed-admin with compatibility updates for modern Django versions.
 
 
 Simple library to easilly add tabs to admin forms. It also allows users to re-order inlines and fieldsets.
